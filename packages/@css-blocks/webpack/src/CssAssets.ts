@@ -123,7 +123,7 @@ export class CssAssets {
         // can be a path relative to the webpack project root or an absolute path.
         // TODO: get the watcher to watch these files on disk
         // TODO: Use loaders to get these files into the assets -- which may help with the watching.
-        compiler.plugin("emit", (compilation, cb) => {
+        compiler.hooks.emit.tapAsync("CssAssets", (compilation, cb) => {
             debug("emitting assets");
             let assetPaths = Object.keys(this.options.cssFiles);
             async.forEach(assetPaths, (assetPath, outputCallback) => {
@@ -165,7 +165,7 @@ export class CssAssets {
         // concatenated asset path and the value is an array of
         // strings of assets that should be in the asset.
         // TODO: maybe some glob or regex support
-        compiler.plugin("emit", (compilation, cb) => {
+        compiler.hooks.emit.tapAsync("CssAssets", (compilation, cb) => {
             debug("concatenating assets");
             if (!this.options.concat) return;
             let concatFiles = Object.keys(this.options.concat);
@@ -221,7 +221,7 @@ export class CssAssets {
         // is set to true (default). By default source maps are generated as a
         // separate file but they can be inline by setting `inlineSourceMaps` to
         // true (false by default)
-        compiler.plugin("emit", (compilation, cb) => {
+        compiler.hooks.emit.tapAsync("CssAssets", (compilation, cb) => {
             if (!this.options.emitSourceMaps) {
                 debug("not adding sourcemaps");
                 cb();

@@ -72,8 +72,13 @@ interface CompilationResult {
   analyses: Array<Analysis<TmpType>>;
 }
 
+export interface Hooks {
+  blockCompilationComplete: any;
+  blockCompilationPending: any;
+  blockCompilationExpired: any;
+}
+
 export class CssBlocksPlugin
-  extends Tapable
   implements WebpackPlugin
 {
   optimizationOptions: OptiCSSOptions;
@@ -84,10 +89,9 @@ export class CssBlocksPlugin
   compilationOptions: CSSBlocksOptions;
   pendingResult?: PendingResult;
   debug: debugGenerator.IDebugger;
+  hooks: Hooks;
 
   constructor(options: CssBlocksWebpackOptions) {
-    super();
-
     this.debug = debugGenerator("css-blocks:webpack");
     this.analyzer = options.analyzer;
     this.outputCssFile = options.outputCssFile || "css-blocks.css";
@@ -95,6 +99,11 @@ export class CssBlocksPlugin
     this.compilationOptions = options.compilationOptions || {};
     this.projectDir = process.cwd();
     this.optimizationOptions = Object.assign({}, DEFAULT_OPTIONS, options.optimization);
+    this.hooks = {
+      blockCompilationPending: new Tapable.SyncHook([]),
+      blockCompilationComplete: new Tapable.AsyncSeriesHook(['result', 'cb']),
+      blockCompilationExpired: new Tapable.SyncHook(['handler']),
+    };
   }
 
   private async handleMake(outputPath: string, assets: Assets, compilation: WebpackAny, cb: (error?: Error) => void) {
@@ -201,38 +210,42 @@ export class CssBlocksPlugin
     let outputPath = compiler.options.output && compiler.options.output.path || this.projectDir; // TODO What is the webpack default output directory?
     let assets: Assets = {};
 
-    compiler.plugin("this-compilation", (compilation) => {
+    compiler.hooks.thisCompilation.tap("CssBlocksPlugin", (compilation) => {
       this.notifyCompilationExpiration();
+      // compilation.hooks.onCompilationExpiration = new tapable.SyncHook(['handler']);
 
-      compilation.plugin("additional-assets", (cb: () => void) => {
+      compilation.hooks.additionalAssets.tapAsync("CssBlocksPlugin", (cb: () => void) => {
         Object.assign(compilation.assets, assets);
         cb();
       });
     });
 
-    compiler.plugin("make", this.handleMake.bind(this, outputPath, assets));
+    compiler.hooks.make.tapAsync("CssBlocksPlugin", this.handleMake.bind(this, outputPath, assets));
 
     // Once we're done, add all discovered block files to the build dependencies
-    // so this plugin is re-evaluated when they change.
+    // so this hooks..tap is re-evaluated when they change.
     // TODO: We get timestamp data here. We can probably intelligently re-build.
-    compiler.plugin("emit", (compilation, callback) => {
+    compiler.hooks.emit.tapAsync("CssBlocksPlugin", (compilation, callback) => {
       let discoveredFiles = [...this.analyzer.transitiveBlockDependencies()].map((b) => b.identifier);
-      compilation.fileDependencies.push(...discoveredFiles);
+      // tslint:disable-next-line
+      compilation.(fileDependencies as any).add(...discoveredFiles);
       callback();
     });
 
-    this.onCompilationExpiration(() => {
-      this.trace(`resetting pending compilation.`);
-      this.pendingResult = undefined;
-    });
+    // this.hooks.onCompilationExpiration.call(() => {
+    //   this.trace(`resetting pending compilation.`);
+    //   this.pendingResult = undefined;
+    // });
+    // this.onCompilationExpiration();
 
-    this.onPendingCompilation((pendingResult) => {
-      this.trace(`received pending compilation.`);
-      this.pendingResult = pendingResult;
-    });
+    // this.hooks.onPendingCompilation((pendingResult) => {
+    //   this.trace(`received pending compilation.`);
+    //   this.pendingResult = pendingResult;
+    // });
+    // this.onPendingCompilation();
 
-    compiler.plugin("compilation", (compilation: WebpackAny) => {
-      compilation.plugin("normal-module-loader", (context: LoaderContext, mod: WebpackAny) => {
+    compiler.hooks.compilation.tap("CssBlocksPlugin", (compilation: WebpackAny) => {
+      compilation.hooks.normalModuleLoader.tap("CssBlocksPlugin", (context: LoaderContext, mod: WebpackAny) => {
         this.trace(`preparing normal-module-loader for ${mod.resource}`);
         context.cssBlocks = context.cssBlocks || { mappings: {}, compilationOptions: this.compilationOptions };
 
@@ -296,29 +309,44 @@ export class CssBlocksPlugin
   /**
    * Fires when the compilation promise is available.
    */
-  onPendingCompilation(handler: (pendingResult: PendingResult) => void): void {
-    this.plugin("block-compilation-pending", handler);
-  }
+  // onPendingCompilation(handler: (pendingResult: PendingResult) => void): void {
+    // this.hooks.blockCompilationPending.call(pendingResult);
+    // this.plugin("block-compilation-pending", handler);
+    // this.hooks.blockCompilationPending = new Tapable.SyncHook([]);
+  // }
   private notifyPendingCompilation(pendingResult: PendingResult): void {
-    this.applyPlugins("block-compilation-pending", pendingResult);
+    this.hooks.blockCompilationPending.call(() => {
+      this.trace(`received pending compilation.`);
+      this.pendingResult = pendingResult;
+    });
+    // this.applyPlugins("block-compilation-pending", pendingResult);
   }
   /**
    * Fires when the compilation is first started to let any listeners know that
    * their current promise is no longer valid.
    */
-  onCompilationExpiration(handler: () => void): void {
-    this.plugin("block-compilation-expired", handler);
-  }
+  // onCompilationExpiration(handler: () => void): void {
+    // this.hooks.blockCompilationExpired.call(handler);
+    // this.hooks.blockCompilationExpired = new Tapable.SyncHook(['handler']);
+    // this.plugin("block-compilation-expired", handler);
+  // }
   private notifyCompilationExpiration(): void {
-    this.applyPlugins("block-compilation-expired");
+    this.hooks.blockCompilationExpired.call(() => {
+      this.trace(`resetting pending compilation.`);
+      this.pendingResult = undefined;
+    });
+    // this.applyPlugins("block-compilation-expired");
   }
   /**
    * Fires when the compilation is done.
    */
-  onComplete(handler: (result: BlockCompilationComplete | BlockCompilationError, cb: (err: Error) => void) => void): void {
-    this.plugin("block-compilation-complete", handler);
-  }
+  // onComplete(handler: (result: BlockCompilationComplete | BlockCompilationError, cb: (err: Error) => void) => void): void {
+    // this.hooks.blockCompilationComplete.callAsync(result, cb);
+    // this.hooks.blockCompilationComplete = new Tapable.AsyncHook(['result', 'cb']);
+    // this.plugin("block-compilation-complete", handler);
+  // }
   private notifyComplete(result: BlockCompilationComplete | BlockCompilationError, cb: (err: Error) => void): void {
-    this.applyPluginsAsync("block-compilation-complete", result, cb);
+    this.hooks.blockCompilationComplete.callAsync(result, cb);
+    // this.applyPluginsAsync("block-compilation-complete", result, cb);
   }
 }
